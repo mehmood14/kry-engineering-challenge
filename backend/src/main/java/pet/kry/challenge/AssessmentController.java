@@ -1,6 +1,8 @@
 package pet.kry.challenge;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -51,7 +53,9 @@ public class AssessmentController {
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseStatusException invalidRequestBody() {
-        return new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid request body or appointment slot");
+    public ResponseEntity<ProblemDetail> invalidRequestBody() {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+            HttpStatus.BAD_REQUEST, "Invalid request body or appointment slot");
+        return ResponseEntity.badRequest().body(problem);
     }
 }

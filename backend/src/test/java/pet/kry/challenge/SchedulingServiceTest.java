@@ -2,6 +2,8 @@ package pet.kry.challenge;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.server.ResponseStatusException;
 import java.time.*;
 import java.util.List;
@@ -70,9 +72,9 @@ class SchedulingServiceTest {
     }
 
     @Test void malformedBookingBodyGetsGenericBadRequest() {
-        ResponseStatusException ex = new AssessmentController(newScheduling()).invalidRequestBody();
-        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
-        assertEquals("Invalid request body or appointment slot", ex.getReason());
+        ResponseEntity<ProblemDetail> response = new AssessmentController(newScheduling()).invalidRequestBody();
+        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+        assertEquals("Invalid request body or appointment slot", response.getBody().getDetail());
     }
 
     @Test void availabilitySupportsAllAppointmentDurations() {
