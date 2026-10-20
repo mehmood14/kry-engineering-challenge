@@ -25,7 +25,8 @@ public class AssessmentController {
         }
         int score = request.answers().stream().mapToInt(Integer::intValue).sum();
         String recommendation = score <= 7 ? "Chat" : score <= 11 ? "Nurse" : "Doctor";
-        return new AssessmentResponse(score, recommendation, scheduling.availableSlots());
+        return new AssessmentResponse(score, recommendation,
+            scheduling.availableSlots(Recommendation.from(recommendation)));
     }
 
     @PostMapping("/booking")
@@ -33,11 +34,12 @@ public class AssessmentController {
         if (request == null || request.slot() == null || request.recommendation() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid booking: slot and recommendation are required");
         }
+        Recommendation recommendation;
         try {
-            Recommendation.from(request.recommendation());
+            recommendation = Recommendation.from(request.recommendation());
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
-        return new BookingResponse(scheduling.book(request.slot()), request.slot(), request.recommendation());
+        return new BookingResponse(scheduling.book(request.slot(), recommendation), request.slot(), request.recommendation());
     }
 }
