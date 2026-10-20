@@ -16,7 +16,7 @@ public class SchedulingService {
     public SchedulingService() { this(Clock.system(CLINIC_ZONE)); }
     SchedulingService(Clock clock) { this.clock = clock; }
 
-    public List<OffsetDateTime> availableSlots(Recommendation recommendation) {
+    public synchronized List<OffsetDateTime> availableSlots(Recommendation recommendation) {
         Objects.requireNonNull(recommendation, "recommendation");
         ZonedDateTime now = ZonedDateTime.now(clock).withZoneSameInstant(CLINIC_ZONE);
         List<OffsetDateTime> result = new ArrayList<>();
@@ -32,7 +32,7 @@ public class SchedulingService {
         return result;
     }
 
-    public List<OffsetDateTime> availableSlots() {
+    public synchronized List<OffsetDateTime> availableSlots() {
         return availableSlots(Recommendation.Chat);
     }
 
@@ -61,8 +61,33 @@ public class SchedulingService {
         return firstStart.isBefore(secondEnd) && secondStart.isBefore(firstEnd);
     }
 
-    public String book(OffsetDateTime slot, Recommendation recommendation) {
+    public synchronized String book(OffsetDateTime slot, Recommendation recommendation) {
+        if (slot == null) {
+            throw new IllegalArgumentException("Appointment slot is required");
+        }
+        if (recommendation == null) {
+            throw new IllegalArgumentException("Recommendation is required");
+        }
+
         ZonedDateTime start = slot.atZoneSameInstant(CLINIC_ZONE);
+        ZonedDateTime now = ZonedDateTime.now(clock).withZoneSameInstant(CLINIC_ZONE);
+        LocalDate firstDate = now.toLocalDate();
+        LocalDate lastDate = firstDate.plusDays(3);
+        if (start.toLocalDate().isBefore(firstDate) || start.toLocalDate().isAfter(lastDate)) {
+            throw new IllegalArgumentException("Appointment must be scheduled today or within the next three days");
+        }
+        if (start.isBefore(now)) {
+            throw new IllegalArgumentException("Appointment slot must be in the future");
+        }
+        LocalTime localStart = start.toLocalTime();
+        if (localStart.isBefore(LocalTime.of(8, 0)) ||
+            !localStart.isBefore(LocalTime.of(18, 0)) ||
+            localStart.getMinute() % 15 != 0 ||
+            localStart.getSecond() != 0 ||
+            localStart.getNano() != 0) {
+            throw new IllegalArgumentException("Appointment must start on a 15-minute boundary between 08:00 and 18:00 Stockholm time");
+        }
+
         ZonedDateTime end = start.plusMinutes(recommendation.getDurationMinutes());
         LocalTime clinicianStart = STARTS.stream()
             .filter(candidate -> coversWorkPeriod(candidate, start.toLocalTime(), end.toLocalTime()))
@@ -70,13 +95,19 @@ public class SchedulingService {
                 booking.clinicianStart().equals(candidate) &&
                 overlaps(start.toInstant(), end.toInstant(), booking.start(), booking.end())))
             .findFirst()
-            .orElseThrow(() -> new IllegalArgumentException("No clinician is available for the requested appointment"));
+            .orElseThrow(() -> new NoAvailabilityException("No clinician is available for the requested appointment"));
         bookings.add(new Booking(start.toInstant(), end.toInstant(), clinicianStart));
         return UUID.randomUUID().toString();
     }
 
-    public String book(OffsetDateTime slot) {
+    public synchronized String book(OffsetDateTime slot) {
         return book(slot, Recommendation.Chat);
+    }
+
+    public static class NoAvailabilityException extends RuntimeException {
+        public NoAvailabilityException(String message) {
+            super(message);
+        }
     }
 
     private record Booking(Instant start, Instant end, LocalTime clinicianStart) {}

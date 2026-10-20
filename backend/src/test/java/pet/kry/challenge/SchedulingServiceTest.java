@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import java.time.*;
 import java.util.List;
+import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SchedulingServiceTest {
@@ -53,6 +54,27 @@ class SchedulingServiceTest {
         assertTrue(ex.getReason().contains("Unsupported recommendation"));
     }
 
+    @Test void bookingReturnsBadRequestForInvalidSlotAndConflictWhenUnavailable() {
+        SchedulingService scheduling = newScheduling();
+        AssessmentController controller = new AssessmentController(scheduling);
+
+        ResponseStatusException invalid = assertThrows(ResponseStatusException.class,
+            () -> controller.book(new AssessmentController.BookingRequest(OPENING.withMinute(1), "Chat")));
+        assertEquals(HttpStatus.BAD_REQUEST, invalid.getStatusCode());
+
+        scheduling.book(OPENING, Recommendation.Nurse);
+        ResponseStatusException unavailable = assertThrows(ResponseStatusException.class,
+            () -> controller.book(new AssessmentController.BookingRequest(OPENING.plusMinutes(15), "Nurse")));
+        assertEquals(HttpStatus.CONFLICT, unavailable.getStatusCode());
+        assertTrue(unavailable.getReason().contains("No clinician is available"));
+    }
+
+    @Test void malformedBookingBodyGetsGenericBadRequest() {
+        ResponseStatusException ex = new AssessmentController(newScheduling()).invalidRequestBody();
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertEquals("Invalid request body or appointment slot", ex.getReason());
+    }
+
     @Test void availabilitySupportsAllAppointmentDurations() {
         SchedulingService scheduling = newScheduling();
         assertFalse(scheduling.availableSlots(Recommendation.Chat).isEmpty());
@@ -74,13 +96,76 @@ class SchedulingServiceTest {
         SchedulingService scheduling = newScheduling();
         scheduling.book(OPENING, Recommendation.Doctor);
         assertFalse(scheduling.availableSlots(Recommendation.Doctor).contains(OPENING));
-        assertThrows(IllegalArgumentException.class, () -> scheduling.book(OPENING, Recommendation.Chat));
+        assertThrows(SchedulingService.NoAvailabilityException.class,
+            () -> scheduling.book(OPENING, Recommendation.Chat));
     }
 
     @Test void backToBackAppointmentsAreAllowed() {
         SchedulingService scheduling = newScheduling();
         scheduling.book(OPENING, Recommendation.Chat);
         assertDoesNotThrow(() -> scheduling.book(OPENING.plusMinutes(15), Recommendation.Chat));
+    }
+
+    @Test void validBookingSucceedsAndConsumesCapacity() {
+        SchedulingService scheduling = newScheduling();
+        String confirmation = scheduling.book(OPENING, Recommendation.Chat);
+        assertNotNull(confirmation);
+        assertFalse(scheduling.availableSlots(Recommendation.Chat).contains(OPENING));
+    }
+
+    @Test void rejectsNullPastMisalignedAndOutsideHorizonSlots() {
+        SchedulingService scheduling = newScheduling();
+        assertThrows(IllegalArgumentException.class, () -> scheduling.book(null, Recommendation.Chat));
+        assertThrows(IllegalArgumentException.class,
+            () -> scheduling.book(OPENING.minusDays(1), Recommendation.Chat));
+        assertThrows(IllegalArgumentException.class,
+            () -> scheduling.book(OPENING.withMinute(1), Recommendation.Chat));
+        assertThrows(IllegalArgumentException.class,
+            () -> scheduling.book(OPENING.plusDays(4), Recommendation.Chat));
+    }
+
+    @Test void rejectsUnavailableSlotWithoutChangingBookingState() {
+        SchedulingService scheduling = newScheduling();
+        scheduling.book(OPENING, Recommendation.Nurse);
+        assertThrows(SchedulingService.NoAvailabilityException.class,
+            () -> scheduling.book(OPENING.plusMinutes(15), Recommendation.Nurse));
+        assertFalse(scheduling.availableSlots(Recommendation.Chat).contains(OPENING));
+        assertTrue(scheduling.availableSlots(Recommendation.Chat).contains(OPENING.plusMinutes(30)));
+    }
+
+    @Test void longerBookingBlocksConflictingAppointment() {
+        SchedulingService scheduling = newScheduling();
+        scheduling.book(OPENING, Recommendation.Doctor);
+        assertThrows(SchedulingService.NoAvailabilityException.class,
+            () -> scheduling.book(OPENING.plusMinutes(15), Recommendation.Chat));
+    }
+
+    @Test void concurrentBookingsCannotOverbookRemainingCapacity() throws Exception {
+        SchedulingService scheduling = newScheduling();
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Callable<Boolean> attempt = () -> {
+                ready.countDown();
+                start.await();
+                try {
+                    scheduling.book(OPENING, Recommendation.Chat);
+                    return true;
+                } catch (SchedulingService.NoAvailabilityException e) {
+                    return false;
+                }
+            };
+            Future<Boolean> first = executor.submit(attempt);
+            Future<Boolean> second = executor.submit(attempt);
+            assertTrue(ready.await(5, TimeUnit.SECONDS));
+            start.countDown();
+            assertEquals(1, List.of(first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS))
+                .stream().filter(Boolean::booleanValue).count());
+            assertFalse(scheduling.availableSlots(Recommendation.Chat).contains(OPENING));
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test void assessmentReturnsRecommendationSpecificAvailability() {

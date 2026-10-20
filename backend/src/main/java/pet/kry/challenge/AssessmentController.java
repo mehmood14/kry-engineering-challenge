@@ -1,6 +1,7 @@
 package pet.kry.challenge;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import java.time.OffsetDateTime;
@@ -40,6 +41,17 @@ public class AssessmentController {
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
-        return new BookingResponse(scheduling.book(request.slot(), recommendation), request.slot(), request.recommendation());
+        try {
+            return new BookingResponse(scheduling.book(request.slot(), recommendation), request.slot(), request.recommendation());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (SchedulingService.NoAvailabilityException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, e.getMessage());
+        }
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseStatusException invalidRequestBody() {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid request body or appointment slot");
     }
 }
