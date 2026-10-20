@@ -30,9 +30,13 @@ public class AssessmentController {
 
     @PostMapping("/booking")
     public BookingResponse book(@RequestBody BookingRequest request) {
-        if (request == null || request.slot() == null || request.recommendation() == null ||
-            !List.of("Chat", "Nurse", "Doctor").contains(request.recommendation())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid booking");
+        if (request == null || request.slot() == null || request.recommendation() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid booking: slot and recommendation are required");
+        }
+        try {
+            Recommendation.from(request.recommendation());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
         }
         return new BookingResponse(scheduling.book(request.slot()), request.slot(), request.recommendation());
     }
